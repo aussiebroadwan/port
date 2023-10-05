@@ -18,53 +18,121 @@ type Message struct {
 	PostedMessageId string
 }
 
-func (m Message) Render(s *discordgo.Session, guildId, channelId, postChannelId string) {
+func (m Message) Render(db *gorm.DB, s *discordgo.Session, guildId, channelId, postChannelId string, reacts int) {
 	// TODO: Render message and/or update it
 
-	originalMessage, err := s.ChannelMessage(channelId, m.MessageId)
+	message, err := GetMessage(db, channelId, m.MessageId)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Get Message", err)
 		return
 	}
 
-	postMessage := &discordgo.MessageSend{
-		Embed: &discordgo.MessageEmbed{
-			Author: &discordgo.MessageEmbedAuthor{
-				Name:    originalMessage.Author.Username,
-				IconURL: originalMessage.Author.AvatarURL(""),
+	if message.PostedMessageId != "" {
+		// Update message
+		fmt.Println("Update message")
+
+		if reacts == 0 {
+			// Delete message
+			err = s.ChannelMessageDelete(postChannelId, message.PostedMessageId)
+			if err != nil {
+				fmt.Println("Delete Message Err: ", err)
+			}
+			return
+		}
+
+		originalMessage, err := s.ChannelMessage(channelId, m.MessageId)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		// edit.SetContent(fmt.Sprintf("%d :port:", reacts))
+		_, err = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+			Channel: channelId,
+			ID:      message.PostedMessageId,
+			Embed: &discordgo.MessageEmbed{
+				Author: &discordgo.MessageEmbedAuthor{
+					Name:    originalMessage.Author.Username,
+					IconURL: originalMessage.Author.AvatarURL(""),
+				},
+				Footer: &discordgo.MessageEmbedFooter{
+					Text: originalMessage.Timestamp.Format(time.Stamp),
+				},
+				Description: originalMessage.Content,
+				Title:       fmt.Sprintf("%d 2 Reacts", reacts),
+				Color:       originalMessage.Author.AccentColor,
 			},
-			Footer: &discordgo.MessageEmbedFooter{
-				Text: originalMessage.Timestamp.Format(time.Stamp),
-			},
-			Description: originalMessage.Content,
-			Color:       originalMessage.Author.AccentColor,
-		},
-		Components: []discordgo.MessageComponent{
-			discordgo.ActionsRow{
-				Components: []discordgo.MessageComponent{
-					discordgo.Button{
-						Label: "Original Message",
-						Style: discordgo.LinkButton,
-						URL:   fmt.Sprintf("https://discord.com/channels/%s/%s/%s", guildId, originalMessage.ChannelID, originalMessage.ID),
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{
+					Components: []discordgo.MessageComponent{
+						discordgo.Button{
+							Label: "Original Message",
+							Style: discordgo.LinkButton,
+							URL:   fmt.Sprintf("https://discord.com/channels/%s/%s/%s", guildId, originalMessage.ChannelID, originalMessage.ID),
+						},
 					},
 				},
 			},
-		},
-	}
+		})
 
-	if len(originalMessage.Attachments) > 0 {
-		postMessage.Embed.Image = &discordgo.MessageEmbedImage{
-			URL: originalMessage.Attachments[0].URL,
+		if err != nil {
+			fmt.Println("Edit Message", err)
+			return
 		}
-	}
 
-	mess, err := s.ChannelMessageSendComplex(postChannelId, postMessage)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+	} else {
 
-	fmt.Printf("Message: %+v\n", mess)
+		originalMessage, err := s.ChannelMessage(channelId, m.MessageId)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		postMessage := &discordgo.MessageSend{
+			Embed: &discordgo.MessageEmbed{
+				Author: &discordgo.MessageEmbedAuthor{
+					Name:    originalMessage.Author.Username,
+					IconURL: originalMessage.Author.AvatarURL(""),
+				},
+				Footer: &discordgo.MessageEmbedFooter{
+					Text: originalMessage.Timestamp.Format(time.Stamp),
+				},
+				Description: originalMessage.Content,
+				Title:       fmt.Sprintf("%d Reacts", reacts),
+				Color:       originalMessage.Author.AccentColor,
+			},
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{
+					Components: []discordgo.MessageComponent{
+						discordgo.Button{
+							Label: "Original Message",
+							Style: discordgo.LinkButton,
+							URL:   fmt.Sprintf("https://discord.com/channels/%s/%s/%s", guildId, originalMessage.ChannelID, originalMessage.ID),
+						},
+					},
+				},
+			},
+		}
+
+		if len(originalMessage.Attachments) > 0 {
+			postMessage.Embed.Image = &discordgo.MessageEmbedImage{
+				URL: originalMessage.Attachments[0].URL,
+			}
+		}
+
+		mess, err := s.ChannelMessageSendComplex(postChannelId, postMessage)
+		if err != nil {
+			fmt.Println("Send Message", err)
+			return
+		}
+
+		err = UpdateMessagePost(db, channelId, m.MessageId, mess.ID)
+		if err != nil {
+			fmt.Println("Update Post: ", err)
+			return
+		}
+
+	}
 }
 
 // GetAllMessages retrieves all messages from the database.
@@ -85,6 +153,16 @@ func GetMessage(db *gorm.DB, channelId, messageId string) (Message, error) {
 	return message, err
 }
 
+func UpdateMessagePost(db *gorm.DB, channelId, messageId, postedMessageId string) error {
+	message, err := GetMessage(db, channelId, messageId)
+	if err != nil {
+		return err
+	}
+
+	message.PostedMessageId = postedMessageId
+	return db.Save(&message).Error
+}
+
 // AddMessage adds a new message to the database.
 // It takes a Gorm database instance, channelId, messageId, message, and owner as input.
 // It returns an error, if any.
@@ -93,6 +171,20 @@ func AddMessage(db *gorm.DB, channelId string, messageId string) error {
 		ChannelId: channelId,
 		MessageId: messageId,
 	}
+
+	// Get all Messages
+	messages, err := GetAllMessages(db)
+	if err != nil {
+		return err
+	}
+
+	// Check if message already exists
+	for _, message := range messages {
+		if message.ChannelId == channelId && message.MessageId == messageId {
+			return nil
+		}
+	}
+
 	return db.Create(&messageObj).Error
 }
 

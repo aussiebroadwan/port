@@ -79,7 +79,7 @@ func messageReact(s *discordgo.Session, m *discordgo.MessageReactionAdd) {
 			return
 		}
 
-		message.Render(s, m.GuildID, m.ChannelID, portChannelId)
+		message.Render(dbConn, s, m.GuildID, m.ChannelID, portChannelId, len(reactors))
 	}
 }
 
@@ -89,23 +89,23 @@ func messageUnreact(s *discordgo.Session, m *discordgo.MessageReactionRemove) {
 	}
 
 	fmt.Printf("[%s:%s] Message Unreact: %s\n", m.ChannelID, m.MessageID, m.Emoji.Name)
-	if m.Emoji.Name == REACT_EMOJI {
-		reactors, err := s.MessageReactions(m.ChannelID, m.MessageID, m.Emoji.APIName(), 100, "", "")
-		if err != nil {
-			fmt.Println("Error getting reactors: ", err)
-			return
-		}
+	// if m.Emoji.Name == REACT_EMOJI {
+	// 	reactors, err := s.MessageReactions(m.ChannelID, m.MessageID, m.Emoji.APIName(), 100, "", "")
+	// 	if err != nil {
+	// 		fmt.Println("Error getting reactors: ", err)
+	// 		return
+	// 	}
 
-		if len(reactors) < THRESHOLD {
-			internal.RemoveMessage(dbConn, m.ChannelID, m.MessageID)
-		}
+	// 	if len(reactors) < THRESHOLD {
+	// 		internal.RemoveMessage(dbConn, m.ChannelID, m.MessageID)
+	// 	}
 
-		// message, err := internal.GetMessage(dbConn, m.ChannelID, m.MessageID)
-		// if err != nil {
-		// 	fmt.Println("Error getting message: ", err)
-		// 	return
-		// }
+	// 	message, err := internal.GetMessage(dbConn, m.ChannelID, m.MessageID)
+	// 	if err != nil {
+	// 		fmt.Println("Error getting message: ", err)
+	// 		return
+	// 	}
 
-		// message.Render(s, portChannelId)
-	}
+	// 	message.Render(dbConn, s, m.GuildID, m.ChannelID, portChannelId)
+	// }
 }
